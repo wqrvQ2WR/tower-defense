@@ -75,7 +75,7 @@
     background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent;
   }
   .overlay p { margin: 0 0 16px; color: var(--muted); line-height: 1.6; font-size: 15px; }
-  .overlay .row { justify-content: center; }
+  .overlay .row { justify-content: center; flex-wrap: wrap; }
   .overlay .row > * { flex: 0 0 auto; }
 
   .panel { display: flex; flex-direction: column; gap: 12px; }
@@ -160,10 +160,11 @@
       <div class="overlay" id="overlay">
         <div class="box">
           <h2 id="ovTitle">프리즘 디펜스</h2>
-          <p id="ovText">길을 따라 몰려오는 적을 막아내세요.<span class="long"><br>타워 17종, 타워마다 5단계 강화. 지갑으로 돈을 벌고 코어 방어로 생명을 늘리세요.</span><br>40 웨이브를 버티면 승리, 이후 무한 모드!<span class="long"><br>후반부터 시작하면 15웨이브, 12000 골드로 바로 대군과 싸워요.</span></p>
+          <p id="ovText">길을 따라 몰려오는 적을 막아내세요.<span class="long"><br>타워 17종, 타워마다 5단계 강화. 지갑으로 돈을 벌고 코어 방어로 생명을 늘리세요.</span><br>40 웨이브를 버티면 승리, 이후 무한 모드!<span class="long"><br>후반부터 시작하면 15웨이브, 12000 골드로 바로 대군과 싸워요.<br>돈 무한 모드는 골드 무제한, 모든 타워가 설치하자마자 최대 강화예요.</span></p>
           <div class="row">
             <button class="btn" id="ovBtn">처음부터</button>
             <button class="btn" id="ovBtnLate">후반부터 시작</button>
+            <button class="btn alt" id="ovBtnRich">돈 무한 모드</button>
             <button class="btn alt" id="ovBtn2" style="display:none">무한 모드 계속</button>
           </div>
           <p class="hint" id="ovBest" style="margin-top:12px"></p>
@@ -318,6 +319,7 @@
   const MODES = {
     normal: { gold: 300, lives: 20, wave: 0 },
     late:   { gold: 12000, lives: 30, wave: 14 },
+    rich:   { gold: 0, lives: 30, wave: 0, infinite: true },
   };
 
   // ---------- 상태 ----------
@@ -325,7 +327,7 @@
   function reset(mode = 'normal') {
     const M = MODES[mode];
     S = {
-      mode, gold: M.gold, lives: M.lives, maxLives: M.lives, leaked: 0, wave: M.wave, score: 0,
+      mode, infinite: !!M.infinite, gold: M.gold, lives: M.lives, maxLives: M.lives, leaked: 0, wave: M.wave, score: 0,
       towers: [], enemies: [], bullets: [], parts: [], texts: [], beams: [],
       spawnQ: [], spawnT: 0, waveActive: false, waveTotal: 0, waveDone: 0,
       selType: null, selTower: null, hover: null,
@@ -528,7 +530,7 @@
     if (rot) g.rotate(-angle);
     for (let i = 0; i < lv; i++) {
       g.fillStyle = '#ffd23d'; g.strokeStyle = '#b45309'; g.lineWidth = 1;
-      star(g, -18 + i * 9, -27, 4); g.fill(); g.stroke();
+      star(g, -18 + i * 9, y < 40 && scale === 1 ? 27 : -27, 4); g.fill(); g.stroke();
     }
     g.restore();
   }
@@ -565,6 +567,7 @@
   }
 
   // ---------- 로직 ----------
+  const canAfford = (c) => S.infinite || S.gold >= c;
   const cellFree = (c, r) => c >= 0 && r >= 0 && c < COLS && r < ROWS && !pathCells.has(c + ',' + r) && !S.towers.some(t => t.c === c && t.r === r);
   const maxWave = () => S.endless ? Infinity : MAX_WAVE;
 
@@ -622,19 +625,20 @@
 
   function placeTower(type, c, r) {
     const d = TOWERS[type];
-    if (!cellFree(c, r) || S.gold < d.cost) return null;
-    S.gold -= d.cost;
-    const t = { type, c, r, x: c * T + T / 2, y: r * T + T / 2, lv: 1, cd: d.kind === 'wallet' ? d.rate : 0, angle: -Math.PI / 2, spent: d.cost, flash: 0, buff: 1, tick: 0 };
+    if (!cellFree(c, r) || !canAfford(d.cost)) return null;
+    if (!S.infinite) S.gold -= d.cost;
+    const t = { type, c, r, x: c * T + T / 2, y: r * T + T / 2, lv: S.infinite ? MAX_LV : 1, cd: d.kind === 'wallet' ? d.rate : 0, angle: -Math.PI / 2, spent: d.cost, flash: 0, buff: 1, tick: 0 };
     S.towers.push(t);
-    if (d.kind === 'core') { S.lives += d.life; S.maxLives += d.life; S.texts.push({ x: t.x, y: t.y - 20, txt: '최대 생명 +' + d.life, life: 1, color: '#ff2a6d' }); }
+    if (d.kind === 'core') { const l = stats(type, t.lv).life; S.lives += l; S.maxLives += l; S.texts.push({ x: t.x, y: t.y - 20, txt: '최대 생명 +' + l, life: 1, color: '#ff2a6d' }); }
     ring(t.x, t.y, 30, d.color);
+    if (t.lv === MAX_LV) { ring(t.x, t.y, 60, '#ff4fa3'); burst(t.x, t.y, '#ffd23d', 12); }
     uiDirty = true;
     return t;
   }
   function upgradeTower(t) {
     if (!t || t.lv >= MAX_LV) return false;
-    const c = upCost(t); if (S.gold < c) return false;
-    S.gold -= c; t.spent += c; t.lv++;
+    const c = upCost(t); if (!canAfford(c)) return false;
+    if (!S.infinite) S.gold -= c; t.spent += c; t.lv++;
     const d = TOWERS[t.type];
     if (d.kind === 'core') { S.lives += d.life; S.maxLives += d.life; S.texts.push({ x: t.x, y: t.y - 20, txt: '최대 생명 +' + d.life, life: 1, color: '#ff2a6d' }); }
     ring(t.x, t.y, 34, '#ffd23d'); burst(t.x, t.y, '#ffd23d', 14);
@@ -881,7 +885,7 @@
     }
     if (S.selType && S.hover) {
       const { c, r } = S.hover, x = c * T + T / 2, y = r * T + T / 2;
-      const ok = cellFree(c, r) && S.gold >= TOWERS[S.selType].cost;
+      const ok = cellFree(c, r) && canAfford(TOWERS[S.selType].cost);
       ctx.fillStyle = ok ? 'rgba(255,255,255,0.45)' : 'rgba(255,59,92,0.35)';
       roundRect(ctx, c * T + 3, r * T + 3, T - 6, T - 6, 10); ctx.fill();
       const rg = stats(S.selType, 1).range;
@@ -1002,9 +1006,9 @@
     if (S.selType) {
       const d = TOWERS[S.selType];
       if (!cellFree(c, r)) return;
-      if (S.gold < d.cost) { S.texts.push({ x: c * T + T / 2, y: r * T + 10, txt: '골드 부족', life: 0.9, color: '#ff3b5c' }); return; }
+      if (!canAfford(d.cost)) { S.texts.push({ x: c * T + T / 2, y: r * T + 10, txt: '골드 부족', life: 0.9, color: '#ff3b5c' }); return; }
       placeTower(S.selType, c, r);
-      if (!ev.shiftKey && S.gold < d.cost) S.selType = null;
+      if (!ev.shiftKey && !canAfford(d.cost)) S.selType = null;
       updateUI();
       return;
     }
@@ -1062,10 +1066,10 @@
   }
 
   function updateUI() {
-    $('lives').textContent = `${S.lives} / ${S.maxLives}`; $('gold').textContent = S.gold.toLocaleString(); $('wave').textContent = S.wave;
+    $('lives').textContent = `${S.lives} / ${S.maxLives}`; $('gold').textContent = S.infinite ? '무한' : S.gold.toLocaleString(); $('wave').textContent = S.wave;
     $('score').textContent = S.score.toLocaleString();
     $('waveOf').textContent = S.endless ? '웨이브 (무한)' : `/ ${MAX_WAVE} 웨이브`;
-    for (const k in btns) { btns[k].classList.toggle('active', S.selType === k); btns[k].classList.toggle('poor', S.gold < TOWERS[k].cost); }
+    for (const k in btns) { btns[k].classList.toggle('active', S.selType === k); btns[k].classList.toggle('poor', !canAfford(TOWERS[k].cost)); }
     const wb = $('waveBtn');
     wb.disabled = !S.started || S.waveActive || S.over;
     wb.textContent = S.over ? '게임 종료' : S.waveActive ? `웨이브 ${S.wave} 진행 중` : `웨이브 ${S.wave + 1} 시작 (Space)`;
@@ -1084,7 +1088,7 @@
         <div class="desc">${d.desc}</div>
         <dl class="kv">${statRows(t.type, t.lv)}</dl>
         <div class="row">
-          <button class="btn alt small" id="upBtn" ${!canUp || S.gold < upCost(t) ? 'disabled' : ''}>${canUp ? `강화 ${upCost(t)} G (U)` : '최대 레벨'}</button>
+          <button class="btn alt small" id="upBtn" ${!canUp || !canAfford(upCost(t)) ? 'disabled' : ''}>${canUp ? `강화 ${upCost(t)} G (U)` : '최대 레벨'}</button>
           <button class="btn ghost small" id="sellBtn">${sellTxt}</button>
         </div>`;
       $('upBtn').onclick = () => { upgradeTower(t); updateUI(); };
@@ -1112,7 +1116,7 @@
   }
   function gameOver(win) {
     S.over = true; S.selType = null; S.waveActive = false;
-    saveBest(S.score);
+    if (!S.infinite) saveBest(S.score);
     $('ovTitle').textContent = win ? '승리!' : '게임 오버';
     $('ovText').innerHTML = win
       ? `${MAX_WAVE} 웨이브를 모두 막아냈어요.<br>점수 <b>${S.score.toLocaleString()}</b> · 최고 콤보 ${S.bestCombo} · 남은 생명 ${S.lives}`
@@ -1125,6 +1129,7 @@
   }
   $('ovBtn').onclick = () => begin('normal');
   $('ovBtnLate').onclick = () => begin('late');
+  $('ovBtnRich').onclick = () => begin('rich');
   $('ovBtn2').onclick = () => {
     S.over = false; S.endless = true;
     $('overlay').classList.add('hidden');
