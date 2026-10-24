@@ -127,7 +127,10 @@
   .hint { color: var(--muted); font-size: 13px; line-height: 1.6; }
   .wavebar { height: 8px; border-radius: 8px; background: #eee6ff; overflow: hidden; margin-top: 8px; }
   .wavebar i { display: block; height: 100%; width: 0; background: var(--grad); transition: width .2s; }
-  .next { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 18px; }
+  .next { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 40px; }
+  button { touch-action: manipulation; }
+  .stat { transition: transform .12s; }
+  .stat.bump { transform: scale(1.1); }
 </style>
 </head>
 <body>
@@ -328,7 +331,7 @@
     const M = MODES[mode];
     S = {
       mode, infinite: !!M.infinite, gold: M.gold, lives: M.lives, maxLives: M.lives, leaked: 0, wave: M.wave, score: 0,
-      towers: [], enemies: [], bullets: [], parts: [], texts: [], beams: [],
+      towers: [], enemies: [], bullets: [], parts: [], texts: [], beams: [], nums: [], coins: [],
       spawnQ: [], spawnT: 0, waveActive: false, waveTotal: 0, waveDone: 0,
       selType: null, selTower: null, hover: null,
       speed: 1, paused: false, over: false, started: false, t: 0,
@@ -415,7 +418,12 @@
     cg.addColorStop(0, d.color2); cg.addColorStop(1, d.color);
     g.fillStyle = cg;
     const rot = !['tesla', 'flame', 'vortex', 'stasis', 'amp', 'wallet', 'core', 'regen'].includes(type);
-    if (rot) g.rotate(angle);
+    if (lv >= MAX_LV && scale === 1) {
+      g.save(); g.strokeStyle = 'rgba(255, 184, 0, 0.8)'; g.lineWidth = 2; g.setLineDash([6, 8]); g.lineDashOffset = -time * 30;
+      g.beginPath(); g.arc(0, 0, 30, 0, 7); g.stroke(); g.restore();
+    }
+    g.save();
+    if (rot) { g.rotate(angle); g.translate(-flash * 5, 0); }
     switch (type) {
       case 'arrow':
         g.beginPath(); g.arc(0, 0, 13, 0, 7); g.fill();
@@ -527,7 +535,7 @@
         break;
       }
     }
-    if (rot) g.rotate(-angle);
+    g.restore();
     for (let i = 0; i < lv; i++) {
       g.fillStyle = '#ffd23d'; g.strokeStyle = '#b45309'; g.lineWidth = 1;
       star(g, -18 + i * 9, y < 40 && scale === 1 ? 27 : -27, 4); g.fill(); g.stroke();
@@ -537,6 +545,7 @@
   function drawEnemy(g, e) {
     const d = ENEMIES[e.type];
     g.save(); g.translate(e.x, e.y + Math.sin(e.bob) * 1.5);
+    if (e.hit > 0) { const k = 1 + e.hit * 3; g.scale(k, k); }
     g.fillStyle = 'rgba(0,0,0,0.15)'; g.beginPath(); g.ellipse(0, d.r * 0.9, d.r, d.r * 0.35, 0, 0, 7); g.fill();
     const gr = g.createRadialGradient(-d.r * 0.35, -d.r * 0.4, 1, 0, 0, d.r);
     gr.addColorStop(0, d.color2); gr.addColorStop(1, e.hit > 0 ? '#ffffff' : e.poisonT > 0 ? '#7ccf2a' : d.color);
@@ -587,6 +596,8 @@
       slowT: 0, slowF: 1, freezeT: 0, freezeImm: 0, pushes: 0, poisonT: 0, poisonDps: 0, hit: 0, bob: Math.random() * 6, dir: 0, dead: false,
     });
   }
+  const COMBO_MS = { 50: '50 콤보!', 100: '100 콤보! 대박', 200: '200 콤보! 학살', 300: '300 콤보! 폭주', 500: '500 콤보! 전설', 1000: '1000 콤보! 신' };
+  const fmtN = (v) => v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e4 ? Math.round(v / 1e3) + 'k' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(Math.max(1, Math.round(v)));
   function kill(e, label) {
     if (e.dead) return;
     e.dead = true; e.hp = 0;
@@ -598,14 +609,22 @@
     if (label) S.texts.push({ x: e.x, y: e.y - 16, txt: label, life: 0.8, color: '#c2410c' });
     else if (S.texts.length < 30) S.texts.push({ x: e.x, y: e.y - 10, txt: '+' + rw, life: 0.8, color: '#b45309' });
     burst(e.x, e.y, ENEMIES[e.type].color, e.type === 'boss' ? 50 : e.type === 'swarm' ? 4 : 10);
+    if (e.type !== 'swarm') ring(e.x, e.y, ENEMIES[e.type].r * 2.2, ENEMIES[e.type].color);
+    if (e.freezeT > 0) burst(e.x, e.y, '#b5f4ff', 8);
+    if (S.coins.length < 40) S.coins.push({ sx: e.x, sy: e.y, cx: e.x + (Math.random() - 0.5) * 120, cy: e.y - 90 - Math.random() * 60, t: 0 });
+    const ms = COMBO_MS[S.combo];
+    if (ms) { S.texts.push({ x: W / 2, y: H / 2 - 50, txt: ms, life: 1.6, color: '#ff4fa3', big: true, pop: true }); S.shake = Math.max(S.shake, 0.25); ring(W / 2, H / 2 - 50, 160, '#ffd23d'); }
     if (e.type === 'boss') { S.shake = 0.45; ring(e.x, e.y, 90, '#ffd23d'); S.texts.push({ x: e.x, y: e.y - 40, txt: '보스 처치  +' + rw, life: 1.4, color: '#ff2a6d', big: true }); }
     uiDirty = true;
   }
-  function damage(e, amt, pierce, noFlash) {
+  function damage(e, amt, pierce, noFlash, crit) {
     if (e.dead) return;
     const real = pierce ? amt : Math.max(amt - e.armor, amt * 0.3);
     e.hp -= real;
-    if (!noFlash) e.hit = 0.06;
+    if (!noFlash) {
+      e.hit = 0.06;
+      if (S.nums.length < (crit ? 45 : 25) && (crit || Math.random() < 0.12)) S.nums.push({ x: e.x + (Math.random() - 0.5) * 30, y: e.y - ENEMIES[e.type].r, vx: (Math.random() - 0.5) * 40, txt: fmtN(real) + (crit ? '!' : ''), crit, life: crit ? 0.9 : 0.6, max: crit ? 0.9 : 0.6 });
+    }
     if (e.hp <= 0) kill(e);
   }
   function burst(x, y, color, n) {
@@ -657,33 +676,37 @@
   }
 
   function fire(t, d, st, targets) {
-    const dmg = st.dmg * t.buff;
+    const crit = Math.random() < 0.12;
+    const dmg = st.dmg * t.buff * (crit ? 2.5 : 1);
+    const muzzle = () => { if (S.parts.length < 900) S.parts.push({ flash: true, vx: 0, vy: 0, x: t.x + Math.cos(t.angle) * 24, y: t.y + Math.sin(t.angle) * 24, r: t.type === 'cannon' ? 14 : 9, life: 0.08, max: 0.08, color: '#fff6b0' }); };
     const first = targets.reduce((a, b) => (b.d > a.d ? b : a));
     const aim = (e) => { t.angle = Math.atan2(e.y - t.y, e.x - t.x); };
     switch (d.kind) {
       case 'bullet': {
         aim(first);
         S.bullets.push({ x: t.x + Math.cos(t.angle) * 20, y: t.y + Math.sin(t.angle) * 20, tx: first.x, ty: first.y, target: first, speed: d.speed,
-          dmg, splash: st.splash, slow: st.slow, slowTime: st.slowTime, poison: st.poison * t.buff, exec: st.exec, type: t.type, color: d.color });
+          dmg, splash: st.splash, slow: st.slow, slowTime: st.slowTime, poison: st.poison * t.buff, exec: st.exec, type: t.type, color: d.color, crit });
+        muzzle();
         break;
       }
       case 'beam': {
         const tg = d.target === 'strong' ? targets.reduce((a, b) => (b.hp > a.hp ? b : a)) : first;
         aim(tg);
         S.beams.push({ pts: [t.x, t.y, tg.x, tg.y], life: 0.15, max: 0.15, color: d.color, w: t.type === 'sniper' ? 4 : 8 });
-        damage(tg, dmg, true);
+        damage(tg, dmg, true, false, crit);
+        if (t.type === 'sniper') { S.parts.push({ flash: true, vx: 0, vy: 0, x: tg.x, y: tg.y, r: 26, life: 0.15, max: 0.15, color: '#ffe4e6' }); }
         burst(tg.x, tg.y, d.color2, 5);
         break;
       }
       case 'chain': {
         const hit = new Set([first]); let cur = first, m = 1;
         const pts = [t.x, t.y - 14, cur.x, cur.y];
-        damage(cur, dmg, false);
+        damage(cur, dmg, false, false, crit);
         for (let i = 1; i < st.chain; i++) {
           let nx = null, nd = 110 * 110;
           for (const e of S.enemies) { if (e.dead || hit.has(e)) continue; const dd = dist2(e, cur); if (dd < nd) { nd = dd; nx = e; } }
           if (!nx) break;
-          m *= 0.85; hit.add(nx); damage(nx, dmg * m, false); pts.push(nx.x, nx.y); cur = nx;
+          m *= 0.85; hit.add(nx); damage(nx, dmg * m, false, false, crit); pts.push(nx.x, nx.y); cur = nx;
         }
         S.beams.push({ pts, life: 0.18, max: 0.18, color: d.color, w: 3, zap: true });
         break;
@@ -694,7 +717,7 @@
           const tg = sorted[i % sorted.length];
           const a = t.angle + (i - (st.missiles - 1) / 2) * 0.9 + Math.PI;
           S.bullets.push({ x: t.x, y: t.y, tx: tg.x, ty: tg.y, target: tg, speed: d.speed, homing: true,
-            vx: Math.cos(a) * 160, vy: Math.sin(a) * 160, dmg, splash: st.splash, type: 'missile', color: d.color });
+            vx: Math.cos(a) * 160, vy: Math.sin(a) * 160, dmg, splash: st.splash, type: 'missile', color: d.color, crit });
         }
         aim(first);
         break;
@@ -829,15 +852,16 @@
           if ((e.x - b.tx) ** 2 + (e.y - b.ty) ** 2 <= rr * rr) hits.push(e);
         }
         for (const e of hits) {
-          damage(e, b.dmg);
+          damage(e, b.dmg, false, false, b.crit);
           if (b.slow && !e.dead) { e.slowF = Math.min(e.slowF, e.type === 'boss' ? 1 - (1 - b.slow) * 0.5 : b.slow); e.slowT = b.slowTime; }
           if (b.poison && !e.dead) { e.poisonDps = Math.min(e.poisonDps + b.poison, b.poison * 5); e.poisonT = 4; }
         }
         ring(b.tx, b.ty, b.splash, b.color);
+        if ((b.type === 'cannon' || b.type === 'missile') && S.parts.length < 900) S.parts.push({ boom: true, vx: 0, vy: 0, x: b.tx, y: b.ty, r: b.splash, life: 0.28, max: 0.28 });
         burst(b.tx, b.ty, b.color, b.type === 'cannon' || b.type === 'missile' ? 10 : 4);
       } else if (b.target && !b.target.dead) {
         const e = b.target;
-        damage(e, b.dmg);
+        damage(e, b.dmg, false, false, b.crit);
         if (b.exec && !e.dead && e.type !== 'boss' && e.hp / e.maxHp <= b.exec) kill(e, '처형');
         burst(b.tx, b.ty, b.color, 2);
       }
@@ -847,7 +871,11 @@
 
     for (const p of S.parts) { p.life -= dt; if (!p.ring) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92; } }
     S.parts = S.parts.filter(p => p.life > 0);
-    for (const t of S.texts) { t.life -= dt; t.y -= 30 * dt; }
+    for (const n of S.nums) { n.life -= dt; n.y -= 45 * dt; n.x += n.vx * dt; }
+    S.nums = S.nums.filter(n => n.life > 0);
+    for (const c of S.coins) { c.t += dt * 1.6; if (c.t >= 1 && !c.done) { c.done = true; bumpGold(); } }
+    S.coins = S.coins.filter(c => !c.done);
+    for (const t of S.texts) { t.life -= dt; t.y -= (t.pop ? 10 : 30) * dt; }
     S.texts = S.texts.filter(t => t.life > 0);
     for (const b of S.beams) b.life -= dt;
     S.beams = S.beams.filter(b => b.life > 0);
@@ -928,6 +956,7 @@
         }
         ctx.lineTo(p[i], p[i + 1]);
       }
+      ctx.strokeStyle = b.color; ctx.globalAlpha = a * 0.3; ctx.lineWidth = b.w * 3.5; ctx.stroke(); ctx.globalAlpha = a;
       ctx.strokeStyle = b.color; ctx.lineWidth = b.w * (b.zap ? 1.6 : a); ctx.stroke();
       ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, b.w * 0.4 * a); ctx.stroke();
     }
@@ -935,7 +964,15 @@
     for (const p of S.parts) {
       const a = Math.max(0, p.life / p.max);
       ctx.globalAlpha = a;
-      if (p.ring) {
+      if (p.boom) {
+        const k = 1 - a, rr = p.r * (0.4 + k * 0.9);
+        const gr = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
+        gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.35, 'rgba(255,214,90,0.85)'); gr.addColorStop(0.7, 'rgba(255,110,40,0.5)'); gr.addColorStop(1, 'rgba(255,80,40,0)');
+        ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, 7); ctx.fill();
+      } else if (p.flash) {
+        ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (0.6 + a * 0.6), 0, 7); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 0.45, 0, 7); ctx.fill();
+      } else if (p.ring) {
         ctx.strokeStyle = p.color; ctx.lineWidth = 4;
         const rr = p.inward ? p.r * a : p.r * (1.2 - a * 0.4);
         ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1, rr), 0, 7); ctx.stroke();
@@ -943,8 +980,25 @@
     }
     ctx.globalAlpha = 1;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const n of S.nums) {
+      const pop = 1 + Math.max(0, n.life - (n.max - 0.12)) * (n.crit ? 8 : 4);
+      ctx.globalAlpha = Math.min(1, n.life * 3);
+      ctx.save(); ctx.translate(n.x, n.y); ctx.scale(pop, pop);
+      ctx.font = `900 ${n.crit ? 22 : 13}px Pretendard, -apple-system, sans-serif`;
+      ctx.lineWidth = n.crit ? 5 : 3; ctx.strokeStyle = n.crit ? '#c2410c' : '#1f1640'; ctx.strokeText(n.txt, 0, 0);
+      ctx.fillStyle = n.crit ? '#ffd23d' : '#ffffff'; ctx.fillText(n.txt, 0, 0);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    for (const c of S.coins) {
+      const k = c.t * c.t, u = 1 - k, tx = W - 40, ty = 16;
+      const x = u * u * c.sx + 2 * u * k * c.cx + k * k * tx, y = u * u * c.sy + 2 * u * k * c.cy + k * k * ty;
+      ctx.fillStyle = '#ffc22e'; ctx.strokeStyle = '#e08a00'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(x, y, 6 * Math.abs(Math.cos(c.t * 12)) + 1.5, 6, 0, 0, 7); ctx.fill(); ctx.stroke();
+    }
     for (const t of S.texts) {
       ctx.globalAlpha = Math.min(1, t.life * 2);
+      if (t.pop) { const k = 1 + Math.max(0, t.life - 1.35) * 4; ctx.save(); ctx.translate(t.x, t.y); ctx.scale(k * 1.4, k * 1.4); ctx.font = '900 30px Pretendard, sans-serif'; ctx.lineWidth = 7; ctx.strokeStyle = '#fff'; ctx.strokeText(t.txt, 0, 0); ctx.fillStyle = t.color; ctx.fillText(t.txt, 0, 0); ctx.restore(); continue; }
       ctx.font = `${t.big ? 900 : 800} ${t.big ? 30 : 15}px Pretendard, -apple-system, sans-serif`;
       ctx.lineWidth = t.big ? 6 : 4; ctx.strokeStyle = '#fff'; ctx.strokeText(t.txt, t.x, t.y);
       ctx.fillStyle = t.color; ctx.fillText(t.txt, t.x, t.y);
@@ -995,20 +1049,49 @@
     const x = (ev.clientX - rect.left) / rect.width * W, y = (ev.clientY - rect.top) / rect.height * H;
     return { c: Math.floor(x / T), r: Math.floor(y / T) };
   }
-  cv.addEventListener('pointermove', ev => { S.hover = cellFromEvent(ev); });
-  cv.addEventListener('pointerleave', () => { S.hover = null; });
+  // 드래그로 지나간 칸마다 설치
+  let drag = null;
+  function tryPlace(c, r) {
+    if (!S.selType || !cellFree(c, r)) return;
+    const d = TOWERS[S.selType];
+    if (!canAfford(d.cost)) {
+      if (!drag || !drag.warned) S.texts.push({ x: c * T + T / 2, y: r * T + 10, txt: '골드 부족', life: 0.9, color: '#ff3b5c' });
+      if (drag) drag.warned = true;
+      return;
+    }
+    placeTower(S.selType, c, r);
+  }
+  function canvasPos(ev) {
+    const rect = cv.getBoundingClientRect();
+    return { x: (ev.clientX - rect.left) / rect.width * W, y: (ev.clientY - rect.top) / rect.height * H };
+  }
+  cv.addEventListener('pointermove', ev => {
+    S.hover = cellFromEvent(ev);
+    if (!drag) return;
+    const p = canvasPos(ev), dx = p.x - drag.x, dy = p.y - drag.y, steps = Math.ceil(Math.hypot(dx, dy) / (T / 3));
+    for (let i = 1; i <= steps; i++) tryPlace(Math.floor((drag.x + dx * i / steps) / T), Math.floor((drag.y + dy * i / steps) / T));
+    drag.x = p.x; drag.y = p.y;
+    uiDirty = true;
+  });
+  cv.addEventListener('pointerleave', () => { if (!drag) S.hover = null; });
+  const endDrag = () => {
+    if (!drag) return;
+    drag = null;
+    if (S.selType && !canAfford(TOWERS[S.selType].cost)) S.selType = null;
+    updateUI();
+  };
+  cv.addEventListener('pointerup', endDrag);
+  cv.addEventListener('pointercancel', endDrag);
   cv.addEventListener('pointerdown', ev => {
-    if (!S.started || S.over) return;
+    if (!S.started || S.over || ev.button === 2) return;
     const { c, r } = cellFromEvent(ev);
     S.hover = { c, r };
     const t = S.towers.find(t => t.c === c && t.r === r);
     if (t) { S.selTower = t; S.selType = null; updateUI(); return; }
     if (S.selType) {
-      const d = TOWERS[S.selType];
-      if (!cellFree(c, r)) return;
-      if (!canAfford(d.cost)) { S.texts.push({ x: c * T + T / 2, y: r * T + 10, txt: '골드 부족', life: 0.9, color: '#ff3b5c' }); return; }
-      placeTower(S.selType, c, r);
-      if (!ev.shiftKey && !canAfford(d.cost)) S.selType = null;
+      drag = { ...canvasPos(ev), warned: false };
+      try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
+      tryPlace(c, r);
       updateUI();
       return;
     }
@@ -1065,46 +1148,59 @@
     }).join('');
   }
 
+  const setText = (id, v) => { const el = $(id); if (el.textContent !== String(v)) el.textContent = v; };
+  let lastInfo = '';
+  let bumpT = 0;
+  function bumpGold() {
+    const now = performance.now(); if (now - bumpT < 120) return; bumpT = now;
+    const el = $('gold').parentElement; el.classList.add('bump'); setTimeout(() => el.classList.remove('bump'), 110);
+  }
   function updateUI() {
-    $('lives').textContent = `${S.lives} / ${S.maxLives}`; $('gold').textContent = S.infinite ? '무한' : S.gold.toLocaleString(); $('wave').textContent = S.wave;
-    $('score').textContent = S.score.toLocaleString();
-    $('waveOf').textContent = S.endless ? '웨이브 (무한)' : `/ ${MAX_WAVE} 웨이브`;
+    setText('lives', `${S.lives} / ${S.maxLives}`); setText('gold', S.infinite ? '무한' : S.gold.toLocaleString()); setText('wave', S.wave);
+    setText('score', S.score.toLocaleString());
+    setText('waveOf', S.endless ? '웨이브 (무한)' : `/ ${MAX_WAVE} 웨이브`);
     for (const k in btns) { btns[k].classList.toggle('active', S.selType === k); btns[k].classList.toggle('poor', !canAfford(TOWERS[k].cost)); }
     const wb = $('waveBtn');
     wb.disabled = !S.started || S.waveActive || S.over;
-    wb.textContent = S.over ? '게임 종료' : S.waveActive ? `웨이브 ${S.wave} 진행 중` : `웨이브 ${S.wave + 1} 시작 (Space)`;
+    setText('waveBtn', S.over ? '게임 종료' : S.waveActive ? `웨이브 ${S.wave} 진행 중` : `웨이브 ${S.wave + 1} 시작 (Space)`);
     $('waveProg').style.width = S.waveActive ? `${(S.waveDone / S.waveTotal) * 100}%` : '0%';
-    $('nextInfo').textContent = S.waveActive ? `남은 적 ${S.waveTotal - S.waveDone} / ${S.waveTotal}` : describeNext();
-    $('speedBtn').textContent = `속도 ${S.speed}x`;
+    setText('nextInfo', S.waveActive ? `남은 적 ${S.waveTotal - S.waveDone} / ${S.waveTotal}` : describeNext());
+    setText('speedBtn', `속도 ${S.speed}x`);
     $('autoBtn').classList.toggle('on', S.auto);
-    $('autoBtn').textContent = S.auto ? '자동 켜짐' : '자동 웨이브';
-    $('pauseBtn').textContent = S.paused ? '계속하기' : '일시정지';
+    setText('autoBtn', S.auto ? '자동 켜짐' : '자동 웨이브');
+    setText('pauseBtn', S.paused ? '계속하기' : '일시정지');
 
     const info = $('info');
+    let html;
     if (S.selTower) {
       const t = S.selTower, d = TOWERS[t.type], canUp = t.lv < MAX_LV;
       const sellTxt = d.kind === 'core' ? `판매 ${Math.floor(t.spent * 0.7)} G · 생명 -${stats(t.type, t.lv).life}` : `판매 ${Math.floor(t.spent * 0.7)} G (S)`;
-      info.innerHTML = `<div class="name">${d.name} <small style="color:#b45309">Lv.${t.lv}${t.lv >= MAX_LV ? ' MAX' : ''}</small>${t.buff > 1 ? ` <small style="color:#ff3fa4">증폭 +${Math.round((t.buff - 1) * 100)}%</small>` : ''}</div>
+      html = `<div class="name">${d.name} <small style="color:#b45309">Lv.${t.lv}${t.lv >= MAX_LV ? ' MAX' : ''}</small>${t.buff > 1 ? ` <small style="color:#ff3fa4">증폭 +${Math.round((t.buff - 1) * 100)}%</small>` : ''}</div>
         <div class="desc">${d.desc}</div>
         <dl class="kv">${statRows(t.type, t.lv)}</dl>
         <div class="row">
           <button class="btn alt small" id="upBtn" ${!canUp || !canAfford(upCost(t)) ? 'disabled' : ''}>${canUp ? `강화 ${upCost(t)} G (U)` : '최대 레벨'}</button>
           <button class="btn ghost small" id="sellBtn">${sellTxt}</button>
         </div>`;
-      $('upBtn').onclick = () => { upgradeTower(t); updateUI(); };
-      $('sellBtn').onclick = () => { sellTower(t); updateUI(); };
     } else if (S.selType) {
       const d = TOWERS[S.selType];
-      info.innerHTML = `<div class="name">${d.name} <small style="color:#c2410c">${d.cost} G</small></div><div class="desc">${d.desc}</div>
+      html = `<div class="name">${d.name} <small style="color:#c2410c">${d.cost} G</small></div><div class="desc">${d.desc}</div>
         <dl class="kv">${statRows(S.selType, 1).replace(/ <em>.*?<\/em>/g, '')}</dl>
-        <p class="hint" style="margin:8px 0 0">빈 땅을 눌러 설치. Shift+클릭으로 연속 설치, 우클릭·Esc로 취소.</p>`;
+        <p class="hint" style="margin:8px 0 0">빈 땅을 눌러 설치, 누른 채로 드래그하면 지나간 칸마다 연속 설치. 우클릭·Esc로 취소.</p>`;
     } else {
-      info.innerHTML = `<div class="name">작전 안내</div>
-        <p class="hint" style="margin:6px 0 0">타워를 고른 뒤 길이 아닌 칸을 눌러 설치하세요. 설치된 타워를 누르면 강화(U, 최대 5단계)·판매(S).<br>
+      html = `<div class="name">작전 안내</div>
+        <p class="hint" style="margin:6px 0 0">타워를 고른 뒤 길이 아닌 칸을 누르거나 드래그해서 설치하세요. 설치된 타워를 누르면 강화(U, 최대 5단계)·판매(S).<br>
         지갑은 웨이브 중에 돈을, 재생탑은 생명을 벌고, 증폭탑은 주변 타워를 강하게 해요. 5웨이브마다 보스!<br>
         단축키: 1~0, Q~I 타워 · Space 웨이브 · P 일시정지</p>`;
     }
+    if (html !== lastInfo) { info.innerHTML = html; lastInfo = html; }
   }
+  // 정보창 버튼은 위임으로 처리 (다시 그려져도 클릭이 안전)
+  $('info').addEventListener('click', ev => {
+    const b = ev.target.closest('button'); if (!b || !S.selTower) return;
+    if (b.id === 'upBtn') upgradeTower(S.selTower); else if (b.id === 'sellBtn') sellTower(S.selTower);
+    updateUI();
+  });
 
   function loadBest() { try { return +localStorage.getItem('prism-td-best2') || 0; } catch (e) { return 0; } }
   function saveBest(v) { try { if (v > loadBest()) localStorage.setItem('prism-td-best2', v); } catch (e) {} }
