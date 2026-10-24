@@ -130,6 +130,10 @@
   .kv dd { margin: 0; font-weight: 700; }
   .kv dd em { color: #16a34a; font-style: normal; }
   .info .row { margin-top: 10px; }
+  .floors { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+  .floors .fl { font: inherit; font-size: 13px; font-weight: 700; text-align: left; padding: 6px 10px; border-radius: 10px; border: 2px solid #e6dcff; background: #fff; color: var(--ink); cursor: pointer; }
+  .floors .fl.on { border-color: #7c3aed; background: #f3edff; color: #7c3aed; }
+  .floors .fl small { color: #b45309; }
   .hint { color: var(--muted); font-size: 13px; line-height: 1.6; }
   .wavebar { height: 8px; border-radius: 8px; background: #eee6ff; overflow: hidden; margin-top: 8px; }
   .wavebar i { display: block; height: 100%; width: 0; background: var(--grad); transition: width .2s; }
@@ -431,10 +435,10 @@
     g.bezierCurveTo(s * 0.7, -s * 1.1, s * 1.4, -s * 0.1, 0, s * 0.9);
     g.closePath();
   }
-  function drawTower(g, type, x, y, lv, angle, scale = 1, flash = 0, time = 0) {
+  function drawTower(g, type, x, y, lv, angle, scale = 1, flash = 0, time = 0, floor = 0, showStars = true) {
     const d = TOWERS[type];
     g.save(); g.translate(x, y); g.scale(scale, scale);
-    g.fillStyle = 'rgba(0,0,0,0.15)'; g.beginPath(); g.ellipse(0, 18, 22, 7, 0, 0, 7); g.fill();
+    g.fillStyle = floor ? 'rgba(0,0,0,0.22)' : 'rgba(0,0,0,0.15)'; g.beginPath(); g.ellipse(0, floor ? 21 : 18, 22, floor ? 5 : 7, 0, 0, 7); g.fill();
     const bg = g.createLinearGradient(-22, -22, 22, 22);
     if (lv >= MAX_LV) { bg.addColorStop(0, '#fff6c2'); bg.addColorStop(1, '#ffd0ef'); }
     else { bg.addColorStop(0, '#ffffff'); bg.addColorStop(1, '#e4dcff'); }
@@ -562,9 +566,9 @@
       }
     }
     g.restore();
-    for (let i = 0; i < lv; i++) {
+    if (showStars) for (let i = 0; i < lv; i++) {
       g.fillStyle = '#ffd23d'; g.strokeStyle = '#b45309'; g.lineWidth = 1;
-      star(g, -18 + i * 9, y < 40 && scale === 1 ? 27 : -27, 4); g.fill(); g.stroke();
+      star(g, -18 + i * 9, y < 40 && scale > 0.5 ? 27 : -27, 4); g.fill(); g.stroke();
     }
     g.restore();
   }
@@ -745,6 +749,14 @@
 
   // ---------- 로직 ----------
   const canAfford = (c) => S.infinite || S.gold >= c;
+  const MAX_STACK = 3, FLOOR_RANGE = 0.15, FLOOR_DY = 11, FLOOR_SCALE = 0.17;
+  const stackAt = (c, r) => S.towers.filter(t => t.c === c && t.r === r).sort((a, b) => a.floor - b.floor);
+  // 층이 높을수록 사거리 증가
+  function tStats(type, lv, floor = 0) {
+    const st = stats(type, lv);
+    if (floor && st.range) st.range = Math.round(st.range * (1 + FLOOR_RANGE * floor));
+    return st;
+  }
   const cellFree = (c, r) => c >= 0 && r >= 0 && c < COLS && r < ROWS && !pathCells.has(c + ',' + r) && !S.towers.some(t => t.c === c && t.r === r);
 
   function startWave() {
@@ -812,14 +824,17 @@
     return out;
   }
 
-  function placeTower(type, c, r) {
+  function placeTower(type, c, r, stack = false) {
     const d = TOWERS[type];
-    if (!cellFree(c, r) || !canAfford(d.cost)) return null;
+    const below = stack ? stackAt(c, r) : [];
+    if (stack ? (!below.length || below.length >= MAX_STACK) : !cellFree(c, r)) return null;
+    if (!canAfford(d.cost)) return null;
     if (!S.infinite) S.gold -= d.cost;
-    const t = { type, c, r, x: c * T + T / 2, y: r * T + T / 2, lv: S.infinite ? MAX_LV : 1, cd: d.kind === 'wallet' ? d.rate : 0, angle: -Math.PI / 2, spent: d.cost, flash: 0, buff: 1, tick: 0 };
+    const t = { type, c, r, floor: below.length, x: c * T + T / 2, y: r * T + T / 2, lv: S.infinite ? MAX_LV : 1, cd: d.kind === 'wallet' ? d.rate : 0, angle: -Math.PI / 2, spent: d.cost, flash: 0, buff: 1, tick: 0 };
     S.towers.push(t);
     if (d.kind === 'core') { const l = stats(type, t.lv).life; S.lives += l; S.maxLives += l; S.texts.push({ x: t.x, y: t.y - 20, txt: '최대 생명 +' + l, life: 1, color: '#ff2a6d' }); }
-    ring(t.x, t.y, 30, d.color);
+    ring(t.x, t.y - t.floor * FLOOR_DY, 30, d.color);
+    if (t.floor) S.texts.push({ x: t.x, y: t.y - t.floor * FLOOR_DY - 34, txt: (t.floor + 1) + '층', life: 0.9, color: '#7c3aed' });
     Snd.play(t.lv === MAX_LV ? 'maxed' : 'place');
     if (t.lv === MAX_LV) { ring(t.x, t.y, 60, '#ff4fa3'); burst(t.x, t.y, '#ffd23d', 12); }
     uiDirty = true;
@@ -842,6 +857,7 @@
     const v = Math.floor(t.spent * 0.7);
     Snd.play('sell');
     S.gold += v; S.towers = S.towers.filter(x => x !== t);
+    stackAt(t.c, t.r).forEach((x, i) => { x.floor = i; });  // 위층이 한 칸씩 내려옴
     if (TOWERS[t.type].kind === 'core') { const l = stats(t.type, t.lv).life; S.maxLives -= l; S.lives = Math.max(1, Math.min(S.lives, S.maxLives)); }
     if (S.selTower === t) S.selTower = null;
     S.texts.push({ x: t.x, y: t.y, txt: '+' + v, life: 1, color: '#b45309' });
@@ -948,12 +964,12 @@
     for (const t of S.towers) t.buff = 1;
     for (const a of S.towers) {
       if (a.type !== 'amp') continue;
-      const st = stats('amp', a.lv), rr = st.range * st.range;
+      const st = tStats('amp', a.lv, a.floor), rr = st.range * st.range;
       for (const t of S.towers) if (t !== a && dist2(t, a) <= rr) t.buff = Math.max(t.buff, 1 + st.amp);
     }
 
     for (const t of S.towers) {
-      const d = TOWERS[t.type], st = stats(t.type, t.lv);
+      const d = TOWERS[t.type], st = tStats(t.type, t.lv, t.floor);
       t.cd -= dt; t.flash = Math.max(0, t.flash - dt * 4);
       if (d.kind === 'amp' || d.kind === 'core') continue;
       if (d.kind === 'regen') {
@@ -1079,7 +1095,7 @@
     ctx.beginPath(); ctx.moveTo(6 + pulse, s0.y - 14); ctx.lineTo(26 + pulse, s0.y); ctx.lineTo(6 + pulse, s0.y + 14); ctx.closePath(); ctx.fill();
 
     if (S.selTower) {
-      const st = stats(S.selTower.type, S.selTower.lv);
+      const st = tStats(S.selTower.type, S.selTower.lv, S.selTower.floor);
       if (st.range) rangeCircle(S.selTower.x, S.selTower.y, st.range, 'rgba(124,58,237,0.14)', 'rgba(124,58,237,0.8)');
       if (S.selTower.type === 'amp') {
         ctx.strokeStyle = 'rgba(255,63,164,0.8)'; ctx.lineWidth = 2;
@@ -1088,20 +1104,38 @@
     }
     if (S.selType && S.hover) {
       const { c, r } = S.hover, x = c * T + T / 2, y = r * T + T / 2;
-      const ok = cellFree(c, r) && canAfford(TOWERS[S.selType].cost);
+      const under = stackAt(c, r), stacking = under.length > 0, fl = under.length;
+      const ok = (stacking ? fl < MAX_STACK : cellFree(c, r)) && canAfford(TOWERS[S.selType].cost);
       ctx.fillStyle = ok ? 'rgba(255,255,255,0.45)' : 'rgba(255,59,92,0.35)';
       roundRect(ctx, c * T + 3, r * T + 3, T - 6, T - 6, 10); ctx.fill();
-      const rg = stats(S.selType, 1).range;
+      const rg = tStats(S.selType, 1, stacking ? fl : 0).range;
       if (rg) rangeCircle(x, y, rg, ok ? 'rgba(255,255,255,0.18)' : 'rgba(255,59,92,0.12)', ok ? 'rgba(255,255,255,0.9)' : 'rgba(255,59,92,0.8)');
-      ctx.globalAlpha = 0.65; drawTower(ctx, S.selType, x, y, 1, 0, 1, 0, S.t); ctx.globalAlpha = 1;
+      if (!stacking || fl < MAX_STACK) { ctx.globalAlpha = 0.65; drawTower(ctx, S.selType, x, y - fl * FLOOR_DY, 1, 0, 1 - FLOOR_SCALE * fl, 0, S.t, fl); ctx.globalAlpha = 1; }
+      if (stacking) {
+        ctx.font = '900 14px Pretendard, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const label = fl < MAX_STACK ? `${fl + 1}층 쌓기` : '최대 3층';
+        ctx.lineWidth = 4; ctx.strokeStyle = '#fff'; ctx.strokeText(label, x, y + 24); ctx.fillStyle = ok ? '#7c3aed' : '#ff3b5c'; ctx.fillText(label, x, y + 24);
+      }
     }
 
-    const sorted = [...S.towers].sort((a, b) => a.y - b.y);
+    const sorted = [...S.towers].sort((a, b) => (a.y - b.y) || (a.floor - b.floor));
+    const topFloor = {};
+    for (const t of S.towers) { const k = t.c + ',' + t.r; topFloor[k] = Math.max(topFloor[k] ?? 0, t.floor); }
     for (const t of sorted) {
-      drawTower(ctx, t.type, t.x, t.y, t.lv, t.angle, 1, t.flash, S.t);
-      if (t.buff > 1) { ctx.fillStyle = '#ff3fa4'; ctx.beginPath(); ctx.arc(t.x + 18, t.y + 18, 4, 0, 7); ctx.fill(); }
+      const ty = t.y - t.floor * FLOOR_DY, isTop = topFloor[t.c + ',' + t.r] === t.floor;
+      drawTower(ctx, t.type, t.x, ty, t.lv, t.angle, 1 - FLOOR_SCALE * t.floor, t.flash, S.t, t.floor, isTop);
+      if (t.buff > 1) { ctx.fillStyle = '#ff3fa4'; ctx.beginPath(); ctx.arc(t.x + 18, ty + 18, 4, 0, 7); ctx.fill(); }
+      if (S.selTower === t) { const k = 1 - FLOOR_SCALE * t.floor; ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 3; roundRect(ctx, t.x - 25 * k, ty - 25 * k, 50 * k, 50 * k, 14 * k); ctx.stroke(); }
     }
 
+    // 쌓인 칸 층수 배지 (모든 타워 위에)
+    ctx.font = '900 11px Pretendard, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const k in topFloor) {
+      if (!topFloor[k]) continue;
+      const [c, r] = k.split(',').map(Number), bx = c * T + 5, by = r * T + T - 11;
+      ctx.fillStyle = '#7c3aed'; roundRect(ctx, bx, by - 8, 28, 16, 8); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillText((topFloor[k] + 1) + '층', bx + 14, by + 0.5);
+    }
     for (const e of S.enemies) drawEnemy(ctx, e);
 
     for (const b of S.bullets) {
@@ -1226,8 +1260,13 @@
   }
   // 드래그로 지나간 칸마다 설치
   let drag = null;
-  function tryPlace(c, r) {
-    if (!S.selType || !cellFree(c, r)) return;
+  function tryPlace(c, r, stack) {
+    if (!S.selType) return;
+    if (stack) {
+      const k = c + ',' + r, n = stackAt(c, r).length;
+      if (!n || n >= MAX_STACK || (drag && drag.done.has(k))) return;
+      if (drag) drag.done.add(k);  // 한 번 드래그에 한 칸당 한 층만
+    } else if (!cellFree(c, r)) return;
     const d = TOWERS[S.selType];
     if (!canAfford(d.cost)) {
       if (!drag || !drag.warned) Snd.play('deny');
@@ -1235,7 +1274,7 @@
       if (drag) drag.warned = true;
       return;
     }
-    placeTower(S.selType, c, r);
+    placeTower(S.selType, c, r, stack);
   }
   function canvasPos(ev) {
     const rect = cv.getBoundingClientRect();
@@ -1245,7 +1284,7 @@
     S.hover = cellFromEvent(ev);
     if (!drag) return;
     const p = canvasPos(ev), dx = p.x - drag.x, dy = p.y - drag.y, steps = Math.ceil(Math.hypot(dx, dy) / (T / 3));
-    for (let i = 1; i <= steps; i++) tryPlace(Math.floor((drag.x + dx * i / steps) / T), Math.floor((drag.y + dy * i / steps) / T));
+    for (let i = 1; i <= steps; i++) tryPlace(Math.floor((drag.x + dx * i / steps) / T), Math.floor((drag.y + dy * i / steps) / T), drag.stack);
     drag.x = p.x; drag.y = p.y;
     uiDirty = true;
   });
@@ -1262,12 +1301,18 @@
     if (!S.started || S.over || ev.button === 2) return;
     const { c, r } = cellFromEvent(ev);
     S.hover = { c, r };
-    const t = S.towers.find(t => t.c === c && t.r === r);
-    if (t) { S.selTower = t; S.selType = null; updateUI(); return; }
+    const st = stackAt(c, r);
+    const stackMode = st.length > 0 && S.selType && st.length < MAX_STACK;
+    if (st.length && !stackMode) {
+      // 같은 칸을 다시 누르면 다음 층 선택
+      const cur = st.indexOf(S.selTower);
+      S.selTower = cur >= 0 ? st[(cur + st.length - 1) % st.length] : st[st.length - 1];
+      S.selType = null; updateUI(); return;
+    }
     if (S.selType) {
-      drag = { ...canvasPos(ev), warned: false };
+      drag = { ...canvasPos(ev), warned: false, stack: stackMode, done: new Set() };
       try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
-      tryPlace(c, r);
+      tryPlace(c, r, stackMode);
       updateUI();
       return;
     }
@@ -1329,8 +1374,8 @@
     for (const s of list) cnt[s.type] = (cnt[s.type] || 0) + 1;
     return `다음: 총 ${list.length}마리 · ` + Object.entries(cnt).map(([k, v]) => `${ENEMIES[k].name} ${v}`).join(' · ');
   }
-  function statRows(type, lv) {
-    const d = TOWERS[type], st = stats(type, lv), nx = lv < MAX_LV ? stats(type, lv + 1) : null;
+  function statRows(type, lv, floor = 0) {
+    const d = TOWERS[type], st = tStats(type, lv, floor), nx = lv < MAX_LV ? tStats(type, lv + 1, floor) : null;
     return STAT_ROWS.filter(([k]) => st[k]).map(([k, label, fmt]) => {
       const up = nx && nx[k] !== st[k] ? ` <em>→ ${fmt(nx[k])}</em>` : '';
       return `<dt>${label(d)}</dt><dd>${fmt(st[k])}${up}</dd>`;
@@ -1364,11 +1409,12 @@
     const info = $('info');
     let html;
     if (S.selTower) {
-      const t = S.selTower, d = TOWERS[t.type], canUp = t.lv < MAX_LV;
+      const t = S.selTower, d = TOWERS[t.type], canUp = t.lv < MAX_LV, stack = stackAt(t.c, t.r);
+      const floors = stack.length > 1 ? `<div class="floors">${stack.slice().reverse().map(x => `<button class="fl${x === t ? ' on' : ''}" data-floor="${x.floor}">${x.floor + 1}층 ${TOWERS[x.type].name} <small>Lv.${x.lv}</small></button>`).join('')}</div>` : '';
       const sellTxt = d.kind === 'core' ? `판매 ${Math.floor(t.spent * 0.7)} G · 생명 -${stats(t.type, t.lv).life}` : `판매 ${Math.floor(t.spent * 0.7)} G (S)`;
-      html = `<div class="name">${d.name} <small style="color:#b45309">Lv.${t.lv}${t.lv >= MAX_LV ? ' MAX' : ''}</small>${t.buff > 1 ? ` <small style="color:#ff3fa4">증폭 +${Math.round((t.buff - 1) * 100)}%</small>` : ''}</div>
+      html = floors + `<div class="name">${stack.length > 1 ? `<small style="color:#7c3aed">${t.floor + 1}층</small> ` : ''}${d.name} <small style="color:#b45309">Lv.${t.lv}${t.lv >= MAX_LV ? ' MAX' : ''}</small>${t.buff > 1 ? ` <small style="color:#ff3fa4">증폭 +${Math.round((t.buff - 1) * 100)}%</small>` : ''}</div>
         <div class="desc">${d.desc}</div>
-        <dl class="kv">${statRows(t.type, t.lv)}</dl>
+        <dl class="kv">${statRows(t.type, t.lv, t.floor)}</dl>
         <div class="row">
           <button class="btn alt small" id="upBtn" ${!canUp || !canAfford(upCost(t)) ? 'disabled' : ''}>${canUp ? `강화 ${upCost(t)} G (U)` : '최대 레벨'}</button>
           <button class="btn ghost small" id="sellBtn">${sellTxt}</button>
@@ -1377,10 +1423,10 @@
       const d = TOWERS[S.selType];
       html = `<div class="name">${d.name} <small style="color:#c2410c">${d.cost} G</small></div><div class="desc">${d.desc}</div>
         <dl class="kv">${statRows(S.selType, 1).replace(/ <em>.*?<\/em>/g, '')}</dl>
-        <p class="hint" style="margin:8px 0 0">빈 땅을 눌러 설치, 누른 채로 드래그하면 지나간 칸마다 연속 설치. 우클릭·Esc로 취소.</p>`;
+        <p class="hint" style="margin:8px 0 0">빈 땅을 눌러 설치, 누른 채로 드래그하면 지나간 칸마다 연속 설치. 이미 있는 타워를 누르면 그 위에 쌓아요(최대 3층, 층마다 사거리 +15%). 우클릭·Esc로 취소.</p>`;
     } else {
       html = `<div class="name">작전 안내</div>
-        <p class="hint" style="margin:6px 0 0">타워를 고른 뒤 길이 아닌 칸을 누르거나 드래그해서 설치하세요. 설치된 타워를 누르면 강화(U, 최대 5단계)·판매(S).<br>
+        <p class="hint" style="margin:6px 0 0">타워를 고른 뒤 길이 아닌 칸을 누르거나 드래그해서 설치하세요. 설치된 타워를 누르면 강화(U, 최대 5단계)·판매(S).<br>타워를 고른 채로 기존 타워를 누르면 위에 쌓을 수 있어요(최대 3층).<br>
         지갑은 웨이브 중에 돈을, 재생탑은 생명을 벌고, 증폭탑은 주변 타워를 강하게 해요. 5웨이브마다 보스!<br>
         단축키: 1~0, Q~I 타워 · Space 웨이브 · P 일시정지 · M 소리</p>`;
     }
@@ -1389,6 +1435,7 @@
   // 정보창 버튼은 위임으로 처리 (다시 그려져도 클릭이 안전)
   $('info').addEventListener('click', ev => {
     const b = ev.target.closest('button'); if (!b || !S.selTower) return;
+    if (b.dataset.floor != null) { const x = stackAt(S.selTower.c, S.selTower.r)[+b.dataset.floor]; if (x) S.selTower = x; updateUI(); return; }
     if (b.id === 'upBtn') upgradeTower(S.selTower); else if (b.id === 'sellBtn') sellTower(S.selTower);
     updateUI();
   });
