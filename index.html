@@ -130,6 +130,9 @@
   .kv dd { margin: 0; font-weight: 700; }
   .kv dd em { color: #16a34a; font-style: normal; }
   .info .row { margin-top: 10px; }
+  .fill { display: flex; align-items: center; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .fill span { font-size: 13px; font-weight: 800; color: var(--muted); flex: 0 0 100%; }
+  .fill .btn { flex: 1; padding: 8px 4px; font-size: 13px; }
   .floors { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
   .floors .fl { font: inherit; font-size: 13px; font-weight: 700; text-align: left; padding: 6px 10px; border-radius: 10px; border: 2px solid #e6dcff; background: #fff; color: var(--ink); cursor: pointer; }
   .floors .fl.on { border-color: #7c3aed; background: #f3edff; color: #7c3aed; }
@@ -824,7 +827,7 @@
     return out;
   }
 
-  function placeTower(type, c, r, stack = false) {
+  function placeTower(type, c, r, stack = false, quiet = false) {
     const d = TOWERS[type];
     const below = stack ? stackAt(c, r) : [];
     if (stack ? (!below.length || below.length >= MAX_STACK) : !cellFree(c, r)) return null;
@@ -835,7 +838,7 @@
     if (d.kind === 'core') { const l = stats(type, t.lv).life; S.lives += l; S.maxLives += l; S.texts.push({ x: t.x, y: t.y - 20, txt: '최대 생명 +' + l, life: 1, color: '#ff2a6d' }); }
     ring(t.x, t.y - t.floor * FLOOR_DY, 30, d.color);
     if (t.floor) S.texts.push({ x: t.x, y: t.y - t.floor * FLOOR_DY - 34, txt: (t.floor + 1) + '층', life: 0.9, color: '#7c3aed' });
-    Snd.play(t.lv === MAX_LV ? 'maxed' : 'place');
+    if (!quiet) Snd.play(t.lv === MAX_LV ? 'maxed' : 'place');
     if (t.lv === MAX_LV) { ring(t.x, t.y, 60, '#ff4fa3'); burst(t.x, t.y, '#ffd23d', 12); }
     uiDirty = true;
     return t;
@@ -851,6 +854,31 @@
     if (t.lv === MAX_LV) { ring(t.x, t.y, 70, '#ff4fa3'); burst(t.x, t.y, '#ff4fa3', 24); S.texts.push({ x: t.x, y: t.y - 30, txt: '최대 강화', life: 1.1, color: '#7c3aed' }); }
     uiDirty = true;
     return true;
+  }
+  // 전체 설치: 1층부터 차례로, 길에 가까운 칸 먼저. 골드가 모자라면 거기서 멈춤
+  const fillOrder = (() => {
+    const out = [];
+    for (let c = 0; c < COLS; c++) for (let r = 0; r < ROWS; r++) {
+      if (pathCells.has(c + ',' + r)) continue;
+      let n = 0; for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) if (pathCells.has((c + dx) + ',' + (r + dy))) n += (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) ? 3 : 1;
+      out.push({ c, r, n });
+    }
+    return out.sort((a, b) => b.n - a.n);
+  })();
+  function fillAll(type, upTo) {
+    let n = 0, broke = false;
+    for (let f = 0; f < upTo && !broke; f++) {
+      for (const { c, r } of fillOrder) {
+        if (stackAt(c, r).length !== f) continue;
+        if (!canAfford(TOWERS[type].cost)) { broke = true; break; }
+        if (placeTower(type, c, r, f > 0, true)) n++;
+      }
+    }
+    if (n) { Snd.play(S.infinite ? 'maxed' : 'upgrade'); S.shake = Math.max(S.shake, 0.15); }
+    else Snd.play('deny');
+    S.texts.push({ x: W / 2, y: H / 2, txt: n ? `${TOWERS[type].name} ${n}개 설치${broke ? ' (골드 부족)' : ''}` : (broke ? '골드 부족' : '더 놓을 자리가 없어요'), life: 1.5, color: n ? '#7c3aed' : '#ff3b5c', big: true });
+    uiDirty = true;
+    return n;
   }
   function sellTower(t) {
     if (!t) return;
@@ -1423,6 +1451,11 @@
       const d = TOWERS[S.selType];
       html = `<div class="name">${d.name} <small style="color:#c2410c">${d.cost} G</small></div><div class="desc">${d.desc}</div>
         <dl class="kv">${statRows(S.selType, 1).replace(/ <em>.*?<\/em>/g, '')}</dl>
+        <div class="fill"><span>전체 설치</span>
+          <button class="btn alt small" data-fill="1">1층 전체</button>
+          <button class="btn alt small" data-fill="2">2층까지</button>
+          <button class="btn alt small" data-fill="3">3층까지</button>
+        </div>
         <p class="hint" style="margin:8px 0 0">빈 땅을 눌러 설치, 누른 채로 드래그하면 지나간 칸마다 연속 설치. 이미 있는 타워를 누르면 그 위에 쌓아요(최대 3층, 층마다 사거리 +15%). 우클릭·Esc로 취소.</p>`;
     } else {
       html = `<div class="name">작전 안내</div>
@@ -1434,7 +1467,9 @@
   }
   // 정보창 버튼은 위임으로 처리 (다시 그려져도 클릭이 안전)
   $('info').addEventListener('click', ev => {
-    const b = ev.target.closest('button'); if (!b || !S.selTower) return;
+    const b = ev.target.closest('button'); if (!b) return;
+    if (b.dataset.fill && S.selType) { fillAll(S.selType, +b.dataset.fill); updateUI(); return; }
+    if (!S.selTower) return;
     if (b.dataset.floor != null) { const x = stackAt(S.selTower.c, S.selTower.r)[+b.dataset.floor]; if (x) S.selTower = x; updateUI(); return; }
     if (b.id === 'upBtn') upgradeTower(S.selTower); else if (b.id === 'sellBtn') sellTower(S.selTower);
     updateUI();
@@ -1495,7 +1530,7 @@
 
   // 테스트/디버그용 훅
   window.__td = {
-    S: () => S, Snd, begin, startWave, placeTower, upgradeTower, sellTower, upCost, stats, TOWERS, ENEMIES, pathCells,
+    S: () => S, Snd, begin, fillAll, startWave, placeTower, upgradeTower, sellTower, upCost, stats, TOWERS, ENEMIES, pathCells,
     setHpScale: (f) => { hpScale = f; },
   };
 })();
